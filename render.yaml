@@ -1,0 +1,14 @@
+services:
+  - type: web
+      name: vj-bot
+          env: python
+              buildCommand: pip install -r requirements.txt
+                  startCommand: gunicorn web_server:app --worker-class gevent
+                      envVars:
+                            - key: BOT_TOKEN
+                                  - key: API_ID
+                                        - key: API_HASH
+                                              - key: ADMINS
+                                                    - key: DB_URI
+                                                          - key: PORT
+                                                                  value: 80808080

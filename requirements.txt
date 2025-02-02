@@ -1,0 +1,5 @@
+pyrogram==2.0.106
+Flask==2.0.3
+motor==3.1.2
+python-dotenv==1.0.0
+gunicorn==20.1.00
