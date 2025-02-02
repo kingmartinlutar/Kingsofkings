@@ -1,101 +1,165 @@
-import logging
-import asyncio
-from pyrogram import Client, filters, enums
+# bot.py - Main command handlers
+from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from config import Config
 from database import db
+import logging
 
-# Initialize logging
-logging.basicConfig(
-    level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+@Client.on_message(filters.command("start") & filters.private)
+async def start_command(client: Client, message: Message):
+    """Handle /start command with welcome message"""
+    try:
+        # Check if user exists in DB
+        if not await db.users.get_user(message.from_user.id):
+            await db.users.create_user(message.from_user.id, message.from_user.first_name)
+            
+        # Create buttons
+        buttons = [
+            [InlineKeyboardButton("📚 Help", callback_data="help"),
+             InlineKeyboardButton("🔑 Login", callback_data="login")],
+            [InlineKeyboardButton("📢 Updates", url="https://t.me/vj_botz"),
+             InlineKeyboardButton("💬 Support", url="https://t.me/vj_bot_disscussion")]
+        ]
+        
+        await message.reply_text(
+            f"👋 Hello {message.from_user.mention}!\n\n"
+            "I can help you download restricted content from Telegram.\n\n"
+            "🔐 Use /login to start session\n"
+            "🆘 Use /help for usage guide",
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
+        
+    except Exception as e:
+        logger.error(f"Start command error: {str(e)}")
+        await message.reply_text("❌ Failed to process command")
 
-        class VJBot(Client):
-            def __init__(self):
-                    super().__init__(
-                                "vj_bot",
-                                            api_id=Config.API_ID,
-                                                        api_hash=Config.API_HASH,
-                                                                    bot_token=Config.BOT_TOKEN,
-                                                                                workers=4,
-                                                                                            sleep_threshold=30
-                                                                                                    )
-                                                                                                            self.batch_tasks = {}
+@Client.on_message(filters.command("help") & filters.private)
+async def help_command(client: Client, message: Message):
+    """Handle /help command with usage instructions"""
+    help_text = (
+        "📖 **Usage Guide**\n\n"
+        "1. For public content:\n"
+        "   `https://t.me/channel/123`\n\n"
+        "2. For private content:\n"
+        "   First send chat invite link\n"
+        "   Then send post link\n\n"
+        "3. For multiple posts:\n"
+        "   `https://t.me/channel/100-120`\n\n"
+        "4. Commands:\n"
+        "   /login - Start session\n"
+        "   /logout - End session\n"
+        "   /cancel - Stop current operation"
+    )
+    await message.reply_text(help_text)
 
-                                                                                                                async def start(self):
-                                                                                                                        await super().start()
-                                                                                                                                logging.info("Bot started successfully")
-                                                                                                                                        
-                                                                                                                                                # Initialize database
-                                                                                                                                                        await db.initialize()
+@Client.on_message(filters.command("login") & filters.private)
+async def login_command(client: Client, message: Message):
+    """Handle login flow"""
+    try:
+        # Step 1: Request phone number
+        sent_msg = await message.reply_text(
+            "📱 Please send your phone number in international format:\n"
+            "Example: `+1234567890`\n\n"
+            "Type /cancel to abort"
+        )
+        
+        # Step 2: Wait for phone number input
+        phone_msg = await client.listen(
+            chat_id=message.chat.id,
+            filters=filters.text & filters.private,
+            timeout=300
+        )
+        
+        if phone_msg.text.lower() == "/cancel":
+            return await message.reply_text("❌ Login cancelled")
+            
+        # Step 3: Send OTP
+        sent_code = await client.send_code(phone_msg.text)
+        
+        # Step 4: Request OTP
+        await message.reply_text(
+            "🔢 Enter the OTP received in format: `1 2 3 4 5`\n\n"
+            "Type /cancel to abort"
+        )
+        
+        # Step 5: Wait for OTP input
+        otp_msg = await client.listen(
+            chat_id=message.chat.id,
+            filters=filters.text & filters.private,
+            timeout=300
+        )
+        
+        if otp_msg.text.lower() == "/cancel":
+            return await message.reply_text("❌ Login cancelled")
+            
+        # Step 6: Complete login
+        await client.sign_in(
+            phone_number=phone_msg.text,
+            phone_code_hash=sent_code.phone_code_hash,
+            phone_code=otp_msg.text.replace(" ", "")
+        )
+        
+        # Step 7: Save session
+        session_string = await client.export_session_string()
+        await db.users.update_session(message.from_user.id, session_string)
+        
+        await message.reply_text("✅ Login successful!")
+        
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        await message.reply_text("❌ Login failed. Please try /login again")
 
-                                                                                                                                                            async def stop(self, *args):
-                                                                                                                                                                    await super().stop()
-                                                                                                                                                                            logging.info("Bot stopped successfully")
+@Client.on_message(filters.command("logout") & filters.private)
+async def logout_command(client: Client, message: Message):
+    """Handle logout command"""
+    try:
+        await db.users.update_session(message.from_user.id, None)
+        await message.reply_text("✅ Logout successful!")
+    except Exception as e:
+        logger.error(f"Logout error: {str(e)}")
+        await message.reply_text("❌ Logout failed")
 
-                                                                                                                                                                            # Initialize bot
-                                                                                                                                                                            bot = VJBot()
+@Client.on_message(filters.command("cancel") & filters.private)
+async def cancel_command(client: Client, message: Message):
+    """Handle operation cancellation"""
+    try:
+        # Add cancellation logic for current operations
+        await message.reply_text("🚫 Current operation cancelled")
+    except Exception as e:
+        logger.error(f"Cancel error: {str(e)}")
+        await message.reply_text("❌ Failed to cancel operation")
 
-                                                                                                                                                                            # ======================
-                                                                                                                                                                            # LOGIN HANDLER
-                                                                                                                                                                            # ======================
-                                                                                                                                                                            @bot.on_message(filters.command("login") & filters.private)
-                                                                                                                                                                            async def handle_login(client: Client, message: Message):
-                                                                                                                                                                                try:
-                                                                                                                                                                                        # Step 1: Get phone number
-                                                                                                                                                                                                await message.reply("📱 Please send your phone number with country code (e.g., +1234567890)")
-                                                                                                                                                                                                        phone_number_msg = await client.listen(message.chat.id)
-                                                                                                                                                                                                                
-                                                                                                                                                                                                                        # Step 2: Send OTP
-                                                                                                                                                                                                                                sent_code = await client.send_code(phone_number_msg.text)
-                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                # Step 3: Get OTP
-                                                                                                                                                                                                                                                        await message.reply("🔢 Please send the OTP you received (format: 1 2 3 4 5)")
-                                                                                                                                                                                                                                                                otp_msg = await client.listen(message.chat.id)
-                                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                                                # Step 4: Sign in
-                                                                                                                                                                                                                                                                                        await client.sign_in(
-                                                                                                                                                                                                                                                                                                    phone_number_msg.text,
-                                                                                                                                                                                                                                                                                                                sent_code.phone_code_hash,
-                                                                                                                                                                                                                                                                                                                            otp_msg.text.replace(" ", "")
-                                                                                                                                                                                                                                                                                                                                    )
-                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                    # Step 5: Save session
-                                                                                                                                                                                                                                                                                                                                                            session_string = await client.export_session_string()
-                                                                                                                                                                                                                                                                                                                                                                    await db.users.update_session(message.from_user.id, session_string)
-                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                                                    await message.reply("✅ Login successful!")
-
-                                                                                                                                                                                                                                                                                                                                                                                        except Exception as e:
-                                                                                                                                                                                                                                                                                                                                                                                                logging.error(f"Login error: {str(e)}")
-                                                                                                                                                                                                                                                                                                                                                                                                        await message.reply("❌ Login failed. Please try /login again.")
-
-                                                                                                                                                                                                                                                                                                                                                                                                        # ======================
-                                                                                                                                                                                                                                                                                                                                                                                                        # CONTENT HANDLER
-                                                                                                                                                                                                                                                                                                                                                                                                        # ======================
-                                                                                                                                                                                                                                                                                                                                                                                                        @bot.on_message(filters.text & filters.private)
-                                                                                                                                                                                                                                                                                                                                                                                                        async def handle_content(client: Client, message: Message):
-                                                                                                                                                                                                                                                                                                                                                                                                            try:
-                                                                                                                                                                                                                                                                                                                                                                                                                    if "t.me/" not in message.text:
-                                                                                                                                                                                                                                                                                                                                                                                                                                return
-                                                                                                                                                                                                                                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                                                                                                                                                                                                                                user_data = await db.users.get_user(message.from_user.id)
-                                                                                                                                                                                                                                                                                                                                                                                                                                                        if not user_data or not user_data.get("session"):
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                    return await message.reply("🔒 Please /login first to access content")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Process Telegram link
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            parts = message.text.split("/")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    if len(parts) < 4:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                return await message.reply("❌ Invalid link format")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    # Implement content downloading logic here
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            await message.reply("📥 Processing your request...")
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                except Exception as e:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        logging.error(f"Content error: {str(e)}")
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                if Config.ERROR_MESSAGE:
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            await message.reply(f"❌ Error: {str(e)}")
-
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            if __name__ == "__main__":
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                bot.run()run()
+@Client.on_message(filters.command("broadcast") & filters.user(Config.ADMINS))
+async def broadcast_command(client: Client, message: Message):
+    """Admin broadcast handler"""
+    try:
+        if not message.reply_to_message:
+            return await message.reply_text("❌ Reply to a message to broadcast")
+            
+        users = await db.users.get_all_users()
+        success = 0
+        failed = 0
+        
+        for user in users:
+            try:
+                await client.copy_message(
+                    chat_id=user['user_id'],
+                    from_chat_id=message.chat.id,
+                    message_id=message.reply_to_message.id
+                )
+                success += 1
+            except Exception:
+                failed += 1
+                
+        await message.reply_text(
+            f"📢 Broadcast complete!\n\n"
+            f"✅ Success: {success}\n"
+            f"❌ Failed: {failed}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Broadcast error: {str(e)}")
+        await message.reply_text("❌ Broadcast failed")
