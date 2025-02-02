@@ -11,4 +11,4 @@ services:
                                               - key: ADMINS
                                                     - key: DB_URI
                                                           - key: PORT
-                                                                  value: 80808080
+                                                                  value: 8080
